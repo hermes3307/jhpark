@@ -1,0 +1,208 @@
+# PowerShell script for document vectorization
+# Save this as "Process-Documents.ps1"
+
+# Configuration
+$BatchFolder = "./batch_documents"
+$VectorDBPath = "./vector_database"
+$LogFile = "./document_processing.log"
+
+# Function to setup environment
+function Setup-Environment {
+    Write-Host "Setting up environment..." -ForegroundColor Green
+    
+    # Create directories
+    @($BatchFolder, $VectorDBPath) | ForEach-Object {
+        if (!(Test-Path $_)) {
+            New-Item -ItemType Directory -Path $_ -Force | Out-Null
+            Write-Host "Created directory: $_" -ForegroundColor Yellow
+        }
+    }
+    
+    # Install Python packages
+    Write-Host "`nInstalling required Python packages..." -ForegroundColor Green
+    $packages = @(
+        "PyPDF2",
+        "python-docx",
+        "openpyxl",
+        "python-pptx",
+        "pandas",
+        "langchain",
+        "chromadb",
+        "faiss-cpu",
+        "sentence-transformers",
+        "openai"
+    )
+    
+    foreach ($package in $packages) {
+        Write-Host "Installing $package..." -ForegroundColor Yellow
+        pip install $package
+    }
+    
+    Write-Host "`nSetup complete!" -ForegroundColor Green
+}
+
+# Function to process documents
+function Process-Documents {
+    Write-Host "Processing documents..." -ForegroundColor Green
+    
+    $pythonScript = @"
+from document_vectorizer import DocumentVectorizer
+import json
+
+vectorizer = DocumentVectorizer('$BatchFolder', '$VectorDBPath')
+stats = vectorizer.batch_process_folder()
+print(json.dumps(stats, indent=2))
+"@
+    
+    $result = python -c $pythonScript
+    $stats = $result | ConvertFrom-Json
+    
+    Write-Host "`nProcessing Results:" -ForegroundColor Green
+    Write-Host "Total Files: $($stats.total_files)" -ForegroundColor Cyan
+    Write-Host "Processed: $($stats.processed)" -ForegroundColor Cyan
+    Write-Host "Skipped: $($stats.skipped)" -ForegroundColor Cyan
+    Write-Host "Errors: $($stats.errors)" -ForegroundColor Cyan
+}
+
+# Function to monitor folder
+function Start-Monitoring {
+    param(
+        [int]$Interval = 60
+    )
+    
+    Write-Host "Starting folder monitoring (Check every $Interval seconds)..." -ForegroundColor Green
+    Write-Host "Press Ctrl+C to stop monitoring" -ForegroundColor Yellow
+    
+    $pythonScript = @"
+from document_vectorizer import DocumentVectorizer
+
+vectorizer = DocumentVectorizer('$BatchFolder', '$VectorDBPath')
+vectorizer.monitor_folder(check_interval=$Interval)
+"@
+    
+    python -c $pythonScript
+}
+
+# Function to search documents
+function Search-Documents {
+    param(
+        [string]$Query,
+        [int]$Results = 5
+    )
+    
+    if ([string]::IsNullOrWhiteSpace($Query)) {
+        $Query = Read-Host "Enter search query"
+    }
+    
+    Write-Host "`nSearching for: '$Query'" -ForegroundColor Green
+    
+    $pythonScript = @"
+from document_vectorizer import DocumentVectorizer
+import json
+
+vectorizer = DocumentVectorizer('$BatchFolder', '$VectorDBPath')
+results = vectorizer.search_documents('$Query', k=$Results)
+
+for i, result in enumerate(results, 1):
+    print(f"\n--- Result {i} ---")
+    print(f"File: {result['metadata']['filename']}")
+    print(f"Category: {result['metadata']['category']}")
+    print(f"Score: {result['score']:.4f}")
+    print(f"Content: {result['content'][:200]}...")
+"@
+    
+    python -c $pythonScript
+}
+
+# Function to show statistics
+function Show-Statistics {
+    Write-Host "`nDocument Database Statistics" -ForegroundColor Green
+    
+    $pythonScript = @"
+from document_vectorizer import DocumentVectorizer
+import json
+
+vectorizer = DocumentVectorizer('$BatchFolder', '$VectorDBPath')
+stats = {
+    'total_processed_files': len(vectorizer.processed_files),
+    'categories': {}
+}
+
+for file_info in vectorizer.processed_files.values():
+    category = file_info.get('category', 'unknown')
+    stats['categories'][category] = stats['categories'].get(category, 0) + 1
+
+print(json.dumps(stats, indent=2))
+"@
+    
+    $result = python -c $pythonScript
+    $stats = $result | ConvertFrom-Json
+    
+    Write-Host "Total Processed Files: $($stats.total_processed_files)" -ForegroundColor Cyan
+    Write-Host "`nFiles by Category:" -ForegroundColor Yellow
+    
+    foreach ($category in $stats.categories.PSObject.Properties) {
+        Write-Host "  $($category.Name): $($category.Value)" -ForegroundColor Cyan
+    }
+}
+
+# Main menu function
+function Show-Menu {
+    Clear-Host
+    Write-Host "==================================" -ForegroundColor Cyan
+    Write-Host " Document Vector Database Manager " -ForegroundColor Cyan
+    Write-Host "==================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "1. Setup Environment" -ForegroundColor White
+    Write-Host "2. Process New Documents" -ForegroundColor White
+    Write-Host "3. Start Continuous Monitoring" -ForegroundColor White
+    Write-Host "4. Search Documents" -ForegroundColor White
+    Write-Host "5. Show Statistics" -ForegroundColor White
+    Write-Host "6. Exit" -ForegroundColor White
+    Write-Host ""
+}
+
+# Main script
+do {
+    Show-Menu
+    $choice = Read-Host "Select an option (1-6)"
+    
+    switch ($choice) {
+        "1" { 
+            Setup-Environment
+            Pause
+        }
+        "2" { 
+            Process-Documents
+            Pause
+        }
+        "3" { 
+            $interval = Read-Host "Enter check interval in seconds (default: 60)"
+            if ([string]::IsNullOrWhiteSpace($interval)) { $interval = 60 }
+            Start-Monitoring -Interval $interval
+            Pause
+        }
+        "4" { 
+            Search-Documents
+            Pause
+        }
+        "5" { 
+            Show-Statistics
+            Pause
+        }
+        "6" { 
+            Write-Host "Exiting..." -ForegroundColor Yellow
+            break
+        }
+        default { 
+            Write-Host "Invalid option. Please try again." -ForegroundColor Red
+            Pause
+        }
+    }
+} while ($choice -ne "6")
+
+# Helper function to pause
+function Pause {
+    Write-Host "`nPress any key to continue..." -ForegroundColor Yellow
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+}
